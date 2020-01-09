@@ -12,6 +12,7 @@ from pandas.io.json._json import JsonReader
 from typing import Callable, Dict, List, Generator, Tuple
 from multiprocessing import Pool
 import os
+import collections
 # import fire
 from collections import defaultdict
 
@@ -19,7 +20,7 @@ from collections import defaultdict
 
 
 class Example(object):
-    def __init__(self, example_id, candidate, annotations, question_len, tokenized_to_original_index, input_ids, start_position, end_position, class_label, doc_start, doc_end, doc_token_start):
+    def __init__(self, example_id, candidate, annotations, question_len, tokenized_to_original_index, input_ids, start_position, end_position, class_label, doc_token_start):
         self.example_id = example_id
         self.candidate = candidate
         self.annotations = annotations
@@ -30,13 +31,13 @@ class Example(object):
         self.start_position = start_position
         self.end_position = end_position
         self.class_label = class_label
-        self.doc_ori_start = doc_start
-        self.doc_ori_end = doc_end
+#         self.doc_ori_start = doc_start
+#         self.doc_ori_end = doc_end
         self.doc_token_start = doc_token_start
 
         
 class Test_Example(object):
-    def __init__(self, example_id, candidate, question_len, tokenized_to_original_index, input_ids, doc_start, doc_end, doc_token_start):
+    def __init__(self, example_id, candidate, question_len, tokenized_to_original_index, input_ids, doc_token_start):
         self.example_id = example_id
         self.candidate = candidate
 #         self.annotations = annotations
@@ -44,8 +45,8 @@ class Test_Example(object):
         self.question_len = question_len
         self.tokenized_to_original_index = tokenized_to_original_index
         self.input_ids = input_ids
-        self.doc_ori_start = doc_start
-        self.doc_ori_end = doc_end
+#         self.doc_ori_start = doc_start
+#         self.doc_ori_end = doc_end
         self.doc_token_start = doc_token_start
 #         self.class_label = class_label
 
@@ -70,13 +71,6 @@ def convert_test_data(
     doc_stride : int
         When splitting up a long document into chunks, how much stride to take between chunks.
     """
-
-#     def _find_short_range(short_answers):
-#         answers = pd.DataFrame(short_answers)
-#         start_min = answers['start_token'].min()
-#         end_max = answers['end_token'].max()
-#         return start_min, end_max
-    
     #model input
     data = json.loads(line)
     doc_words = data['document_text'].split()
@@ -100,17 +94,15 @@ def convert_test_data(
         index += 1
         if _['top_level'] == True:
 #             print('true')
-            start_position = original_to_tokenized_index[_['start_token']]
-            end_position = original_to_tokenized_index[_['end_token']]
+            s = original_to_tokenized_index[_['start_token']]
+            e = original_to_tokenized_index[_['end_token']]
 #             print(start_position, end_position)
-            choosed_candidates.append((start_position, end_position, _['start_token'], _['end_token']))
-#     print('num_examples:',len(choosed_candidates))
-#     if index==0:
-#         print(index)
+            choosed_candidates.append((s, e, _['start_token'], _['end_token']))
+
     examples = []
     max_doc_len = max_seq_len - len(question_tokens) - 3  # [CLS], [SEP], [SEP]
     for t in choosed_candidates:
-        doc_start, doc_end, doc_ori_start_, doc_ori_end_ = t
+        doc_start, doc_end, doc_ori_start, doc_ori_end_ = t
         doc_tokens = all_doc_tokens[doc_start:doc_end]
         if len(doc_tokens)<=max_doc_len:
             input_tokens = ['[CLS]'] + question_tokens + ['[SEP]'] + doc_tokens + ['[SEP]']
@@ -126,8 +118,8 @@ def convert_test_data(
                 question_len=len(question_tokens),
                 tokenized_to_original_index=tokenized_to_original_index,
                 input_ids=tokenizer.convert_tokens_to_ids(input_tokens),
-                doc_start=doc_ori_start_,
-                doc_end=doc_ori_end_,
+#                 doc_start=doc_ori_start_,
+#                 doc_end=doc_ori_end_,
                 doc_token_start=doc_start
 #                 class_label=label
         ))
@@ -219,9 +211,9 @@ def convert_data(
 #         index += 1
         if _['top_level'] == True:
 #             print('true')
-            docu_start = original_to_tokenized_index[_['start_token']]
-            docu_end = original_to_tokenized_index[_['end_token']]
-            choosed_candidates.append((docu_start, docu_end, _['start_token'], _['end_token']))
+            s = original_to_tokenized_index[_['start_token']]
+            e = original_to_tokenized_index[_['end_token']]
+            choosed_candidates.append((s, e, _['start_token'], _['end_token']))
     examples = []
     max_doc_len = max_seq_len - len(question_tokens) - 3  # [CLS], [SEP], [SEP]
     for t in choosed_candidates:
@@ -229,7 +221,7 @@ def convert_data(
         doc_tokens = all_doc_tokens[doc_start:doc_end]
         if doc_start <= start_position and end_position <= doc_end:
             if len(doc_tokens)<=max_doc_len:
-                input_tokens = ['[CLS]'] + question_tokens + ['[SEP]'] + all_doc_tokens[doc_start:doc_end] + ['[SEP]']
+                input_tokens = ['[CLS]'] + question_tokens + ['[SEP]'] + doc_tokens + ['[SEP]']
                 start = start_position - doc_start + len(question_tokens) + 2
                 end = end_position - doc_start + len(question_tokens) + 2
             else:
@@ -268,8 +260,8 @@ def convert_data(
                 start_position=start, # input_tokens
                 end_position=end,
                 class_label=label,
-                doc_start=doc_ori_start_,
-                doc_end=doc_ori_end_,
+#                 doc_start=doc_ori_start_,
+#                 doc_end=doc_ori_end_,
                 doc_token_start=doc_start
         ))
 
@@ -353,16 +345,101 @@ def Split(train_file, k):
             for _ in train_index:
                 f.write(train[_])
 
+
+def remove_duplicates(span):
+    start_end = []
+    for s in span:
+        cont = 0
+        if not start_end:
+            start_end.append(Span(s[0], s[1], s[2], s[3]))
+            cont += 1
+        else:
+            for i in range(len(start_end)):
+                if start_end[i][0] == s[0] and start_end[i][1] == s[1]:
+                    cont += 1
+        if cont == 0:
+            start_end.append(Span(s[0], s[1], s[2], s[3]))
+            
+    return start_end
+
                 
-# Span = collections.namedtuple("Span", ["start_token_idx", "end_token_idx"])
+def get_short_long_span(predictions, examples):
+    
+    sorted_predictions = sorted(predictions, reverse=True)
+    short_span = []
+    long_span = []
+    for prediction in sorted_predictions:
+        score, _, summary, start_span, end_span = prediction
+        # get scores > zero
+        if score > 0:
+            short_span.append(Span(int(start_span), int(end_span), int(_), float(score)))
+
+    short_span = remove_duplicates(short_span)
+
+    for s in range(len(short_span)):
+#         for c in example.candidates:
+        start = short_span[s].start_token_idx
+        end = short_span[s].end_token_idx
+        long_span.append(Span(int(examples[short_span[s].index_j].candidate[2]), int(examples[short_span[s].index_j].candidate[3]), float(short_span[s].score)))
+        
+    long_span = remove_duplicates(long_span)
+    
+    if not long_span:
+        long_span = [Span(-1, -1, -1, -10000.0)]
+    if not short_span:
+        short_span = [Span(-1, -1, -1, -10000.0)]
+        
+    
+    return short_span, long_span
+
                 
-                
+    
+Span = collections.namedtuple("Span", ["start_token_idx", "end_token_idx", "index_j", "score"])
+
 class ScoreSummary(object):
     def __init__(self):
-#         self.predicted_label = None
+        self.predicted_label = None
         self.short_span_score = None
         self.cls_token_score = None
         self.answer_type_logits = None
+
+def df_long_index_score(long_span):
+    answers = []
+    cont = 0
+    for e in long_span:
+        # if score > 2
+        if e[3] > 3: 
+            index = {}
+            index['start'] = e[0]
+            index['end'] = e[1]
+            index['score'] = e[3]
+            answers.append(index)
+            cont += 1
+        # number of answers
+        if cont == 1:
+            break
+            
+    return answers
+
+def df_short_index_score(short_span):
+    answers = []
+    cont = 0
+    for e in short_span:
+        # if score > 2
+        if e[3] > 8:
+            index = {}
+            index['start'] = e[0]
+            index['end'] = e[1]
+            index['score'] = e[3]
+            answers.append(index)
+            cont += 1
+        # number of answers
+        if cont == 1:
+            break
+            
+    return answers
+
+
 
                 
 class Result(object):
@@ -389,14 +466,11 @@ class Result(object):
         return True
     
     def top_k_indices(self, logits, n_best_size):
-    #     print(logits.shape) # (512,)
         indices = np.argsort(logits[1:])+1 #从小到大的索引值
-#         indices = indices[token_map[indices]!=-1]
         return indices[-n_best_size:] # 取前20个概率最大的索引
     
         
     def update(self, examples, start_preds, end_preds, class_preds):
-#         class_pred = torch.max(class_pred, dim=1)[1].numpy() # (batch,)
         for i, example in enumerate(examples):#batch
             if not example.example_id in self.examples.keys():
                 self.examples[example.example_id] = []
@@ -405,17 +479,14 @@ class Result(object):
             if not example.example_id in self.start_results.keys():
                 self.start_results[example.example_id] = []
             self.start_results[example.example_id].append(start_preds[i])
-#             print(start_preds[i].shape)
             
             if not example.example_id in self.end_results.keys():
                 self.end_results[example.example_id] = []
             self.end_results[example.example_id].append(end_preds[i])
-#             print(end_preds[i].shape)
             
             if not example.example_id in self.class_pred.keys():
                 self.class_pred[example.example_id] = []
             self.class_pred[example.example_id].append(class_preds[i])
-#             print(class_preds[i].shape)
 
     def _generate_predictions(self):
         """Generate predictions of each examples.
@@ -423,23 +494,22 @@ class Result(object):
         long_answers = {}
         short_answers = {}
         class_answers = {}
+        nq_pred_dict = {}
+        n_best_size = 5
         for i, item in enumerate(self.start_results.keys()): # line level
             score_tuples = []
             def by_score(t):
                 return -t[0]
             for j, exam_start_logit in enumerate(self.start_results[item]): # example level
-                start_indexes = self.top_k_indices(exam_start_logit, 20)
-                end_indexes = self.top_k_indices(self.end_results[item][j], 20)
+                start_indexes = self.top_k_indices(exam_start_logit, n_best_size)
+                end_indexes = self.top_k_indices(self.end_results[item][j], n_best_size)
                 indexes = np.array(list(np.broadcast(start_indexes[None],end_indexes[:,None])))
                 indexes = indexes[(indexes[:,0]<indexes[:,1])*((indexes[:,1]-indexes[:,0])<self.max_answer_length)*(indexes[:,0]>(2+self.examples[item][j].question_len))]
-#                 print(indexes.shape)
-#                 i = 0
                 predictions = []
                 for start_index, end_index in indexes: # index level
                     summary = ScoreSummary()
                     summary.short_span_score = (exam_start_logit[start_index]+self.end_results[item][j][end_index])
                     summary.cls_token_score = (exam_start_logit[0] + self.end_results[item][j][0])
-            #         print(result.answer_type_logits, result.answer_type_logits.mean())
                     summary.answer_type_logits = self.class_pred[item][j]-self.class_pred[item][j].mean()#归一化
                     t_o_s = start_index-self.examples[item][j].question_len-2+self.examples[item][j].doc_token_start
                     t_o_e = end_index-self.examples[item][j].question_len-2+self.examples[item][j].doc_token_start
@@ -456,46 +526,87 @@ class Result(object):
                         continue
                     score = summary.short_span_score - summary.cls_token_score
                     predictions.append((score, j, summary, start_span, end_span))
-                
-                if predictions:
-#                     print(i,j)
                     
-                    score_tuple = sorted(predictions, key=by_score)[0] #取分数最大的那个span
-#                     print(sorted(predictions, key=by_score))
-#                     short_span = Span(start_span, end_span) # example short span
-                    score_tuples.append(score_tuple)
-            score, index_j, summary, start_span, end_span = sorted(score_tuples, key=by_score)[0] #example中分数最高的那个
-#             print('jijij',sorted(score_tuples, key=by_score))
-            short_span = (start_span, end_span)
-            answer_type = self.class_labels[int(np.argmax(summary.answer_type_logits))]
-            if answer_type in ['YES','NO']:
-                short_answer = answer_type
-                long_answer_s = self.examples[item][index_j].candidate[2]
-                long_answer_e = self.examples[item][index_j].candidate[3]
-                long_answer = (long_answer_s, long_answer_e)
-                class_answer = answer_type
-            elif answer_type == 'UNKNOWN' or score < 1.5:
-                short_answer = None
-                long_answer = None
-                class_answer = answer_type
-            elif answer_type == 'SHORT':
-                short_answer = short_span
-                long_answer_s = self.examples[item][index_j].candidate[2]
-                long_answer_e = self.examples[item][index_j].candidate[3]
-                long_answer = (long_answer_s, long_answer_e)
-                class_answer = answer_type
+            short_span = [Span(-1, -1, -1, -10000.0)]
+            long_span  = [Span(-1, -1, -1, -10000.0)]
+            
+            
+            print('len_predic:', len(predictions))
+            if predictions:
+#                 score, index_j, summary, start_span, end_span = sorted(score_tuples, key=by_score)[0] #example中分数最高的那个
+                short_spans, long_spans = get_short_long_span(predictions, self.examples[item])
+#                 short_span = (start_span, end_span)
+                answer_type = self.class_labels[int(np.argmax(summary.answer_type_logits))]
+            
+            long_answer = df_long_index_score(long_span)
+            short_answer = df_short_index_score(short_span)
+            if long_answer:
+                long_answers[item] = str(long_answer[0]['start'])+':'+str(long_answer[0]['end'])
             else:
-                short_answer = None
-                long_answer_s = self.examples[item][index_j].candidate[2]
-                long_answer_e = self.examples[item][index_j].candidate[3]
-                long_answer = (long_answer_s, long_answer_e)
-                class_answer = answer_type
-#                 print('last else',class_answer)
-            long_answers[item] = long_answer
-            short_answers[item] = short_answer
-            class_answers[item] = class_answer
+                long_answers[item] = None
+            if short_answer:
+                short_answers[item] = str(short_answer[0]['start']) + ':' + str(short_answer[0]['end'])
+            else:
+                short_answers[item] = None
+            
+#             summary.predicted_label = {
+#                 "example_id": int(item),
+#                 "long_answers": {
+#                   "tokens_and_score": long_span,
+#                   #"end_token": long_span,
+#                   "start_byte": -1,
+#                   "end_byte": -1
+#                 },
+#                 #"long_answer_score": answer_score,
+#                 "short_answers": {
+#                   "tokens_and_score": short_span,
+#                   #"end_token": short_span,
+#                   "start_byte": -1,
+#                   "end_byte": -1,
+#                   "yes_no_answer": "NONE"
+#                 }}
+                
+#             nq_pred_dict[item] = summary.predicted_label    
+            
+        
+                
+                
+                
+#                 if score < 0:
+#                     short_answer = None
+#                     long_answer = None
+#                     class_answer = 'UNKNOWN'
+#                 else:
+#                     if answer_type in ['YES','NO']:
+#                         short_answer = answer_type
+#                         long_answer_s = self.examples[item][index_j].candidate[2]
+#                         long_answer_e = self.examples[item][index_j].candidate[3]
+#                         long_answer = str(long_answer_s)+':'+str(long_answer_e)
+#                         class_answer = answer_type
+#                     elif answer_type == 'SHORT':
+#                         short_answer = str(short_span[0])+':'+str(short_span[1])
+#                         long_answer_s = self.examples[item][index_j].candidate[2]
+#                         long_answer_e = self.examples[item][index_j].candidate[3]
+#                         long_answer = str(long_answer_s)+':'+str(long_answer_e)
+#                         class_answer = answer_type
+#                     elif answer_type == 'LONG':
+#                         short_answer = None
+#                         long_answer_s = self.examples[item][index_j].candidate[2]
+#                         long_answer_e = self.examples[item][index_j].candidate[3]
+#                         long_answer = str(long_answer_s)+':'+ str(long_answer_e)
+#                         class_answer = answer_type
+#                     else:
+#                         short_answer = None
+#                         long_answer = None
+#                         class_answer = 'UNKNOWN'
+#             else:
+#                 short_answer = None
+#                 long_answer = None
+#                 class_answer = 'UNKNOWN'
+            
+#             class_answers[item] = class_answer
                     
-        return (long_answers, short_answers, class_answers)
+        return (long_answers, short_answers)
 
     def score(self):
         """Calculate score of all examples.
@@ -509,13 +620,13 @@ class Result(object):
                 return x / y
 
         TP, FP, FN = 0,0,0
-        long_as, short_as, class_as = self._generate_predictions()
+        long_as, short_as = self._generate_predictions()
 #         print('length:',len(long_as),len(short_as),len(class_as))
         for example_id in long_as.keys():
             example = self.examples[example_id][0]
             long_pred = long_as[example_id]
             short_pred = short_as[example_id]
-            class_pred = class_as[example_id]
+#             class_pred = class_as[example_id]
             long_label = example.annotations['long_answer']
             if long_label['candidate_index'] == -1:
                 l_label = None

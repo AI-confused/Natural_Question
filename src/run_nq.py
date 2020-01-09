@@ -11,6 +11,7 @@ import pandas as pd
 import numpy as np
 import torch
 import time
+import collections
 import torch.nn as nn
 from collections import defaultdict
 import gc
@@ -394,20 +395,6 @@ def main():
                                  max_question_len=args.max_question_len,
                                  doc_stride=args.doc_stride)
         data_reader = JsonChunkReader(train_dir, convert_func, chunksize=args.chunksize)
-#         dev_data_reader = JsonChunkReader(dev_dir, convert_func, chunksize=args.chunksize)
-        
-         #test
-#         with open('data/fold_5/data_0/dev.jsonl', 'r') as f:
-#             lines = f.readlines()
-#         for _ in lines:
-#             d = json.loads(_)
-#             if d['example_id'] == 6325965056565598380:
-#                 answer = convert_func(_)
-#         print('test:',len(answer))
-#         for _ in answer:
-#             print(_.doc_start, len(_.tokenized_to_original_index), _.start_position, _.end_position, _.class_label)
-
-        #test
         
         # Prepare optimizer
         param_optimizer = list(model.named_parameters())
@@ -551,64 +538,64 @@ def main():
         del train_dataloader, train_dataset, dev_dataset, dev_dataloader, data_reader, dev_data_reader
         gc.collect()
     
-    if args.do_test:
-        args.do_train=False
-        model = BertForQuestionAnswering.from_pretrained(os.path.join(args.output_dir, "pytorch_model.bin"), config=config)
-        model = model.to(args.device)
+#     if args.do_test:
+#         args.do_train=False
+#         model = BertForQuestionAnswering.from_pretrained(os.path.join(args.output_dir, "pytorch_model.bin"), config=config)
+#         model = model.to(args.device)
 
-        #CUDA distribute
-        if args.n_gpu > 1:                                                 
-            model = torch.nn.DataParallel(model)
-        test_dir = os.path.join(args.data_dir, 'test.jsonl')
-        test_size = len(open(test_dir,'r').readlines()) 
-        public_dataset, private_dataset = False, False
-        if test_size == 346:
-            public_dataset = True
-            print('public dataset')
-        elif test_size > 346:
-            private_dataset = True
-            print('private dataset')
-        test_convert_func = functools.partial(convert_test_data,
-                                 tokenizer=tokenizer,
-                                 max_seq_len=args.max_seq_length,
-                                 max_question_len=args.max_question_len)
-        test_examples = Test_Json_Reaser(test_dir, test_convert_func) #List[List[Test_Example]]
-#         print(len(test_examples))
-        all_test_examples = []
-        for _ in test_examples:
-            for exam in _:
-                all_test_examples.append(exam)
-#         print(len(all_test_examples))
-        Test_dataset = TestDataset(all_test_examples)
-        logger.info('***** test_examples:' + str(len(Test_dataset))+' *****')
-        logger.info("***** Running Testing *****")
-        logger.info("  Test Batch size = %d", args.eval_batch_size)
-        # Run prediction for full data
-        test_sampler = SequentialSampler(Test_dataset)
-        Test_dataloader = DataLoader(Test_dataset, sampler=test_sampler, batch_size=args.eval_batch_size, collate_fn=test_collate_fn)   
+#         #CUDA distribute
+#         if args.n_gpu > 1:                                                 
+#             model = torch.nn.DataParallel(model)
+#         test_dir = os.path.join(args.data_dir, 'test.jsonl')
+#         test_size = len(open(test_dir,'r').readlines()) 
+#         public_dataset, private_dataset = False, False
+#         if test_size == 346:
+#             public_dataset = True
+#             print('public dataset')
+#         elif test_size > 346:
+#             private_dataset = True
+#             print('private dataset')
+#         test_convert_func = functools.partial(convert_test_data,
+#                                  tokenizer=tokenizer,
+#                                  max_seq_len=args.max_seq_length,
+#                                  max_question_len=args.max_question_len)
+#         test_examples = Test_Json_Reaser(test_dir, test_convert_func) #List[List[Test_Example]]
+# #         print(len(test_examples))
+#         all_test_examples = []
+#         for _ in test_examples:
+#             for exam in _:
+#                 all_test_examples.append(exam)
+# #         print(len(all_test_examples))
+#         Test_dataset = TestDataset(all_test_examples)
+#         logger.info('***** test_examples:' + str(len(Test_dataset))+' *****')
+#         logger.info("***** Running Testing *****")
+#         logger.info("  Test Batch size = %d", args.eval_batch_size)
+#         # Run prediction for full data
+#         test_sampler = SequentialSampler(Test_dataset)
+#         Test_dataloader = DataLoader(Test_dataset, sampler=test_sampler, batch_size=args.eval_batch_size, collate_fn=test_collate_fn)   
 
-        model.eval()
-        with torch.no_grad():
-            test_result = Test_Result()
-            for inputs, examples in tqdm(Test_dataloader):#batch
-                input_ids, input_mask, segment_ids = inputs
-                y_preds = model(input_ids=input_ids.to(device), attention_mask=input_mask.to(device), token_type_ids=segment_ids.to(device))
-                start_preds, end_preds, class_preds = (p.detach().cpu() for p in y_preds)
-                start_logits, start_index = torch.max(start_preds, dim=1)
-#                                     print(start_logits.size())
-                #(batch,)&(batch,)
-                end_logits, end_index = torch.max(end_preds, dim=1)
+#         model.eval()
+#         with torch.no_grad():
+#             test_result = Test_Result()
+#             for inputs, examples in tqdm(Test_dataloader):#batch
+#                 input_ids, input_mask, segment_ids = inputs
+#                 y_preds = model(input_ids=input_ids.to(device), attention_mask=input_mask.to(device), token_type_ids=segment_ids.to(device))
+#                 start_preds, end_preds, class_preds = (p.detach().cpu() for p in y_preds)
+#                 start_logits, start_index = torch.max(start_preds, dim=1)
+# #                                     print(start_logits.size())
+#                 #(batch,)&(batch,)
+#                 end_logits, end_index = torch.max(end_preds, dim=1)
 
-                cls_logits = start_preds[:, 0] + end_preds[:, 0]#[cls] logits
-                logits = start_logits+end_logits-cls_logits # (batch,)
-                indices = torch.stack((start_index, end_index)).transpose(0,1)#(batch,2)
-                test_result.update(examples, logits.numpy(), indices.numpy(), class_preds)
-        long_answers, short_answers, class_answers = test_result.generate_prediction()
-        print('long & short answers predict done!')
-        if public_dataset:
-            write_answer_public(long_answers, short_answers, os.path.join(args.data_dir, 'sample_submission.csv'), 'submission.csv')
-        elif private_dataset:
-            write_answer_private(long_answers, short_answers, 'submission.csv')
+#                 cls_logits = start_preds[:, 0] + end_preds[:, 0]#[cls] logits
+#                 logits = start_logits+end_logits-cls_logits # (batch,)
+#                 indices = torch.stack((start_index, end_index)).transpose(0,1)#(batch,2)
+#                 test_result.update(examples, logits.numpy(), indices.numpy(), class_preds)
+#         long_answers, short_answers, class_answers = test_result.generate_prediction()
+#         print('long & short answers predict done!')
+#         if public_dataset:
+#             write_answer_public(long_answers, short_answers, os.path.join(args.data_dir, 'sample_submission.csv'), 'submission.csv')
+#         elif private_dataset:
+#             write_answer_private(long_answers, short_answers, 'submission.csv')
         
         
         
